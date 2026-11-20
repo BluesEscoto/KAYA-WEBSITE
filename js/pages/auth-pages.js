@@ -373,7 +373,7 @@
         }
       };
 
-      if (Auth.backend === "supabase") {
+      if (Auth.backend !== "local") {
         fields.city = application.city;
         Auth.registerWorker(fields, null, application).then(function (res) {
           if (!res.ok) { busy(form, false); goStep(1); ui.fieldErrors(form, res.errors); ui.showMessage(out, "", "info"); return; }

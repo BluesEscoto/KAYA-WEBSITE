@@ -3,7 +3,7 @@
    (Construction Standard: keep API-specific logic in one client module). */
 KAYA.IntegrationClient = (function () {
   var CLIENT_KEY = "cb-system-key-v1";
-  var REMOTE = KAYA.Auth && KAYA.Auth.backend === "supabase";
+  var REMOTE = KAYA.Auth && KAYA.Auth.backend !== "local";
   var TIMEOUT_MS = REMOTE ? 15000 : 5000;
   var SIMULATED_LATENCY_MS = REMOTE ? 0 : 250;
 

@@ -718,11 +718,35 @@ KAYA.WorkerManagementAPI = (function () {
     }).then(function (r) { return r.error || !r.data ? down() : r.data; }, down);
   }
 
+  /* ---------- KAYA backend (Node.js + MySQL) ----------
+     With js/shared/api-config.js pointing at the backend, the same routes are real HTTP
+     calls. The server identifies the caller from their login token, so the
+     X-Customer-Id / X-Role headers are not trusted there either. */
+
+  function http(req) {
+    var down = function () { return fail(503, "SERVICE_UNAVAILABLE", "Can't reach the KAYA server. Check your connection and try again."); };
+    var token = KAYA.Auth.token();
+    if (!token) { KAYA.Auth.sessionEnded(); return Promise.resolve(fail(401, "UNAUTHENTICATED", "Please log in again.")); }
+    var headers = { Accept: "application/json", Authorization: "Bearer " + token };
+    if (req.body !== undefined) { headers["Content-Type"] = "application/json"; }
+    var idem = (req.headers || {})["Idempotency-Key"];
+    if (idem) { headers["Idempotency-Key"] = idem; }
+    return fetch(KAYA.apiUrl + req.path, {
+      method: req.method, headers: headers, body: req.body === undefined ? undefined : JSON.stringify(req.body)
+    }).then(function (r) {
+      return r.json().then(function (body) {
+        if (r.status === 401) { KAYA.Auth.sessionEnded(); }
+        return body && (body.error || r.ok) ? { status: r.status, body: body } : down();
+      }, down);
+    }, down);
+  }
+
   /* ---------- Router ---------- */
 
-  /* Returns the response, or a Promise of it when Supabase is connected. */
+  /* Returns the response, or a Promise of it when a server (backend or Supabase) is connected. */
   function handle(req) {
     if (isDown()) { return fail(503, "SERVICE_UNAVAILABLE", "Worker Management is temporarily unavailable."); }
+    if (KAYA.Auth && KAYA.Auth.backend === "api") { return http(req); }
     if (KAYA.Auth && KAYA.Auth.backend === "supabase") { return remote(req); }
     var who = caller(req.headers);
     if (!who) { return fail(401, "INVALID_CLIENT", "Missing or invalid client credentials."); }

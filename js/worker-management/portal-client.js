@@ -15,7 +15,7 @@ KAYA.PortalClient = function (role, userId) {
           var e = res.body.error;
           reject({ status: res.status, code: e.code, message: e.message, details: e.details });
         });
-      }, KAYA.Auth && KAYA.Auth.backend === "supabase" ? 0 : 150);
+      }, KAYA.Auth && KAYA.Auth.backend !== "local" ? 0 : 150);
     });
   }
   return { request: request };

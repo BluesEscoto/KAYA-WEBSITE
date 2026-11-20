@@ -10,7 +10,8 @@
   var SUPABASE_URL = "https://lsbtybzwypoytbjgoasl.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_rmcMErv-LpiNjQ1kYaVVHw_ehgIRcR1";
 
-  var ready = window.supabase && SUPABASE_URL.indexOf("YOUR-") === -1 && /^https?:$/.test(window.location.protocol);
+  /* The KAYA backend (js/shared/api-config.js) takes over from Supabase when it is configured. */
+  var ready = !KAYA.apiUrl && window.supabase && SUPABASE_URL.indexOf("YOUR-") === -1 && /^https?:$/.test(window.location.protocol);
   KAYA.supabaseStorageKey = "sb-" + SUPABASE_URL.split("//")[1].split(".")[0] + "-auth-token";
   KAYA.supabase = ready ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 })();

@@ -196,6 +196,7 @@ KAYA.Auth = (function () {
   /* The role always comes from the account record, never from the session object,
      so editing the session cannot grant another role. */
   function sessionUser() {
+    if (API) { return apiSessionUser(); }
     if (SB) { return sbSessionUser(); }
     var sess = readSession();
     if (!sess || !sess.user_id || !sess.token) { return null; }
@@ -713,6 +714,187 @@ KAYA.Auth = (function () {
     });
   }
 
+  /* ---------- KAYA backend (Node.js + MySQL) ----------
+     Used when js/shared/api-config.js sets KAYA.apiUrl. The server holds the accounts and
+     enforces every rule. The session (token plus a copy of the profile) is kept in this
+     browser so guard() can run before the page renders, then re-checked on every page load. */
+
+  var API = KAYA.apiUrl || null;
+  var API_SESSION_KEY = "kaya_api_session";
+
+  /* Resolves to { status, body }; rejects only when the server can't be reached. */
+  function apiRequest(method, path, body, token) {
+    var headers = { Accept: "application/json" };
+    if (body !== undefined) { headers["Content-Type"] = "application/json"; }
+    if (token) { headers.Authorization = "Bearer " + token; }
+    return fetch(API + "/api/v1/" + path, {
+      method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (b) { return { status: r.status, body: b || {} }; },
+        function () { return { status: r.status, body: {} }; });
+    });
+  }
+
+  function apiReadSession() {
+    var raw = null;
+    try { raw = sessionStorage.getItem(API_SESSION_KEY) || localStorage.getItem(API_SESSION_KEY); } catch (e) { return null; }
+    if (!raw) { return null; }
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function apiWriteSession(sess) {
+    try {
+      sessionStorage.removeItem(API_SESSION_KEY);
+      localStorage.removeItem(API_SESSION_KEY);
+      (sess.remember ? localStorage : sessionStorage).setItem(API_SESSION_KEY, JSON.stringify(sess));
+    } catch (e) { /* storage blocked */ }
+  }
+
+  function apiClearSession() {
+    try { sessionStorage.removeItem(API_SESSION_KEY); localStorage.removeItem(API_SESSION_KEY); } catch (e) { /* storage blocked */ }
+  }
+
+  function apiSessionUser() {
+    var s = apiReadSession();
+    if (!s || !s.token || !s.user) { return null; }
+    if (Date.now() > s.expires_at || s.user.status !== "ACTIVE") { apiClearSession(); return null; }
+    return s.user;
+  }
+
+  function apiToken() {
+    return apiSessionUser() ? apiReadSession().token : null;
+  }
+
+  function apiStart(body, remember) {
+    apiWriteSession({ token: body.token, expires_at: body.expires_at, user: body.user, remember: !!remember && body.user.role !== "admin" });
+  }
+
+  function apiUpdateUser(user) {
+    var s = apiReadSession();
+    if (s) { s.user = user; apiWriteSession(s); }
+  }
+
+  function apiMessage(res) {
+    return res.body.error && res.body.error.message ? res.body.error.message : "Something went wrong. Please try again.";
+  }
+
+  /* Server field errors, keyed by the field names the forms use. */
+  function apiFieldErrors(res) {
+    var errors = {};
+    ((res.body.error && res.body.error.details) || []).forEach(function (d) {
+      var field = String(d.field).replace(/^application\./, "");
+      if (!errors[field]) { errors[field] = d.issue.charAt(0).toUpperCase() + d.issue.slice(1); }
+    });
+    if (!Object.keys(errors).length) { errors.email = apiMessage(res); }
+    return errors;
+  }
+
+  /* The server ended this session (expired, signed out elsewhere, or suspended). */
+  function apiSessionEnded() {
+    apiClearSession();
+    if (api.required && !api.soft) { window.location.replace(loginUrl(api.required, "expired")); } else { renderNav(); }
+  }
+
+  function apiLogin(email, password, opts) {
+    opts = opts || {};
+    return apiRequest("POST", "auth/login", {
+      email: (email || "").trim().toLowerCase(), password: password || "",
+      portal: opts.portal === "admin" ? "admin" : "public", remember: !!opts.remember
+    }).then(function (res) {
+      if (res.status !== 200) { return { ok: false, error: apiMessage(res) }; }
+      apiStart(res.body, opts.remember);
+      return { ok: true, user: res.body.user };
+    }, function () { return { ok: false, error: NET_ERROR }; });
+  }
+
+  /* A worker's application travels with the sign-up; the server creates both records together. */
+  function apiCreateAccount(role, fields, linkedId, application) {
+    var errors = validateAccount(fields);
+    if (Object.keys(errors).length) { return Promise.resolve({ ok: false, errors: errors }); }
+    return apiRequest("POST", "auth/register", {
+      role: role, full_name: fields.full_name.trim(), email: fields.email.trim().toLowerCase(),
+      phone: (fields.phone || "").trim(), city: fields.city || "", password: fields.password,
+      application: application || undefined
+    }).then(function (res) {
+      if (res.status !== 201) { return { ok: false, errors: apiFieldErrors(res) }; }
+      apiStart(res.body, false);
+      return { ok: true, user: res.body.user };
+    }, function () { return { ok: false, errors: { email: NET_ERROR } }; });
+  }
+
+  function apiLogout(redirectTo) {
+    apiClearSession();
+    window.location.replace(redirectTo || "login.html?reason=logout");
+  }
+
+  function apiUpdateProfile(fields) {
+    var token = apiToken();
+    if (!token) { return Promise.resolve({ ok: false, error: "Please log in again." }); }
+    var errors = {};
+    if (fields.full_name !== undefined && fields.full_name.trim().length < 2) { errors.full_name = "Enter your full name."; }
+    if (fields.phone !== undefined && fields.phone && !PHONE_RE.test(fields.phone.trim())) { errors.phone = "Use a PH mobile number, e.g. 0917 123 4567."; }
+    if (Object.keys(errors).length) { return Promise.resolve({ ok: false, errors: errors }); }
+    var patch = {};
+    ["full_name", "phone", "city"].forEach(function (f) { if (fields[f] !== undefined) { patch[f] = fields[f].trim(); } });
+    return apiRequest("PATCH", "auth/me", patch, token).then(function (res) {
+      if (res.status === 401) { apiSessionEnded(); return { ok: false, error: "Please log in again." }; }
+      if (res.status !== 200) { return { ok: false, errors: apiFieldErrors(res), error: apiMessage(res) }; }
+      apiUpdateUser(res.body.user);
+      return { ok: true, user: res.body.user };
+    }, function () { return { ok: false, error: NET_ERROR }; });
+  }
+
+  /* Signs out every other device; this one receives a fresh token. */
+  function apiChangePassword(oldPw, newPw) {
+    var s = apiReadSession();
+    if (!apiSessionUser()) { return Promise.resolve({ ok: false, error: "Please log in again." }); }
+    var err = passwordError(newPw);
+    if (err) { return Promise.resolve({ ok: false, error: err }); }
+    return apiRequest("POST", "auth/password", { old_password: oldPw || "", new_password: newPw, remember: !!s.remember }, s.token)
+      .then(function (res) {
+        if (res.status === 401) { apiSessionEnded(); return { ok: false, error: "Please log in again." }; }
+        if (res.status !== 200) { return { ok: false, error: apiMessage(res) }; }
+        s.token = res.body.token;
+        s.expires_at = res.body.expires_at;
+        apiWriteSession(s);
+        return { ok: true };
+      }, function () { return { ok: false, error: NET_ERROR }; });
+  }
+
+  function apiListUsers() {
+    var token = apiToken();
+    if (!token) { return Promise.resolve([]); }
+    return apiRequest("GET", "admin/users", undefined, token).then(function (res) {
+      if (res.status === 401) { apiSessionEnded(); return []; }
+      return res.status === 200 ? res.body.data : [];
+    }, function () { return []; });
+  }
+
+  function apiSetUserStatus(userId, status) {
+    var token = apiToken();
+    if (!token) { return Promise.resolve({ ok: false, error: "Please log in again." }); }
+    return apiRequest("PATCH", "admin/users/" + encodeURIComponent(userId) + "/status", { status: status }, token).then(function (res) {
+      if (res.status === 401) { apiSessionEnded(); return { ok: false, error: "Please log in again." }; }
+      if (res.status !== 200) { return { ok: false, error: apiMessage(res) }; }
+      return { ok: true, user: res.body.user };
+    }, function () { return { ok: false, error: NET_ERROR }; });
+  }
+
+  /* Re-check the cached profile against the server: picks up a role or name change,
+     and sessions ended by a password change or an admin suspending the account. */
+  function apiVerify() {
+    var token = apiToken();
+    if (!token) { return; }
+    var cachedRole = apiSessionUser().role;
+    apiRequest("GET", "auth/me", undefined, token).then(function (res) {
+      if (res.status === 401) { apiSessionEnded(); return; }
+      if (res.status !== 200) { return; }
+      apiUpdateUser(res.body.user);
+      if (res.body.user.role !== cachedRole) { window.location.reload(); return; }
+      renderNav();
+    }, function () { /* offline: keep the cached profile until the next check */ });
+  }
+
   if (SB) {
     api.recovering = /type=recovery/.test(window.location.hash) || /reason=reset/.test(window.location.search);
     SB.auth.onAuthStateChange(function (event) {
@@ -804,7 +986,8 @@ KAYA.Auth = (function () {
     }
     window.addEventListener("pageshow", function (e) { if (e.persisted) { recheck("login"); } });
     window.addEventListener("storage", function (e) {
-      if (e.key === SESSION_KEY || e.key === DB_KEY || e.key === PROFILE_KEY || (SB && e.key === KAYA.supabaseStorageKey)) { recheck("logout"); }
+      if (e.key === SESSION_KEY || e.key === DB_KEY || e.key === PROFILE_KEY || e.key === API_SESSION_KEY ||
+          (SB && e.key === KAYA.supabaseStorageKey)) { recheck("logout"); }
     });
     setInterval(function () { recheck("expired"); }, 60000);
   }
@@ -872,36 +1055,43 @@ KAYA.Auth = (function () {
   document.addEventListener("DOMContentLoaded", function () {
     renderNav();
     watchSession();
+    if (API) { apiVerify(); }
     if (SB) { sbVerify(); }
   });
   window.addEventListener("hashchange", renderNav);
 
+  var createFor = API ? apiCreateAccount : SB ? sbCreateAccount : createAccount;
+
   api.guard = guard;
   api.current = current;
-  api.backend = SB ? "supabase" : "local";
-  api.login = SB ? sbLogin : login;
-  api.logout = SB ? sbLogout : logout;
-  api.registerCustomer = function (fields) { return (SB ? sbCreateAccount : createAccount)("customer", fields); };
-  /* Supabase: the application travels with the sign-up and the database creates the worker record. */
-  api.registerWorker = function (fields, workerId, application) { return (SB ? sbCreateAccount : createAccount)("worker", fields, workerId, application); };
+  api.backend = API ? "api" : SB ? "supabase" : "local";
+  api.login = API ? apiLogin : SB ? sbLogin : login;
+  api.logout = API ? apiLogout : SB ? sbLogout : logout;
+  api.registerCustomer = function (fields) { return createFor("customer", fields); };
+  /* Backend and Supabase: the application travels with the sign-up and the server creates the worker record. */
+  api.registerWorker = function (fields, workerId, application) { return createFor("worker", fields, workerId, application); };
   api.validateAccount = validateAccount;
-  api.emailTaken = SB ? function () { return false; } : emailTaken;
+  api.emailTaken = API || SB ? function () { return false; } : emailTaken;
   api.passwordStrength = passwordStrength;
   api.passwordError = passwordError;
-  api.updateProfile = SB ? sbUpdateProfile : updateProfile;
-  api.changePassword = SB ? sbChangePassword : changePassword;
+  api.updateProfile = API ? apiUpdateProfile : SB ? sbUpdateProfile : updateProfile;
+  api.changePassword = API ? apiChangePassword : SB ? sbChangePassword : changePassword;
+  /* No email service is connected to the backend yet, so reset works like the demo: same reply for every email. */
   api.requestPasswordReset = SB ? sbRequestPasswordReset : requestPasswordReset;
+  api.token = apiToken;
+  api.sessionEnded = apiSessionEnded;
   api.setNewPassword = sbSetNewPassword;
   api.sendEmailCode = sbSendEmailCode;
   api.verifyEmailCode = sbVerifyEmailCode;
   api.verifiedEmail = sbVerifiedEmail;
-  api.listUsers = SB ? sbListUsers : listUsers;
-  api.setUserStatus = SB ? sbSetUserStatus : setUserStatus;
+  api.listUsers = API ? apiListUsers : SB ? sbListUsers : listUsers;
+  api.setUserStatus = API ? apiSetUserStatus : SB ? sbSetUserStatus : setUserStatus;
   api.findByLinkedId = findByLinkedId;
   api.safeNext = safeNext;
   api.homeFor = homeFor;
   api.renderNav = renderNav;
-  api.reset = SB ? sbReset : reset;
+  /* With a server (backend or Supabase), "reset" clears only this browser's demo data and settings. */
+  api.reset = API || SB ? sbReset : reset;
   api.ROLE_LABELS = ROLE_LABELS;
   api._sha256 = sha256;
   return api;

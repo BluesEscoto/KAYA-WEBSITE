@@ -295,6 +295,7 @@
 
   function settings() {
     var me = Auth.current();
+    var server = { supabase: "Supabase", api: "the KAYA server" }[Auth.backend];
     root.innerHTML = head("Settings", "Admin account, security and demo controls.") +
       '<div class="layout-2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)"><div>' +
       '<div class="card"><h2>Admin account</h2><ul class="checklist"><li><span>Name</span><strong>' + ui.esc(me.full_name) + "</strong></li><li><span>Email</span><span>" + ui.esc(me.email) +
@@ -305,8 +306,8 @@
       '<button class="btn btn--primary" type="submit">Update password</button><p id="pw-msg" class="notice" hidden></p></form></div><div>' +
       '<div class="card"><h2>Failure test: Worker Management outage</h2><p class="small muted">Turn this on, then try to book as a customer. The booking must fail with a clear message and never show as confirmed.</p>' +
       '<label class="checkbox"><input id="outage-toggle" type="checkbox"> Simulate Worker Management being down (503)</label></div>' +
-      (Auth.backend === "supabase"
-        ? '<div class="card"><h2>Reset this browser</h2><p class="small muted">Clears service settings and the outage switch saved in this browser. Accounts, workers and bookings are in Supabase and are not affected.</p>' +
+      (server
+        ? '<div class="card"><h2>Reset this browser</h2><p class="small muted">Clears service settings and the outage switch saved in this browser. Accounts, workers and bookings are in ' + server + ' and are not affected.</p>' +
           '<button id="reset-btn" class="btn btn--danger" type="button">Reset this browser</button></div></div></div>'
         : '<div class="card"><h2>Reset demo data</h2><p class="small muted">Restores sample workers, bookings, accounts and service settings. Every account, including yours, is signed out.</p>' +
           '<button id="reset-btn" class="btn btn--danger" type="button">Reset all data</button></div></div></div>');
@@ -318,13 +319,13 @@
       ui.toast(outage.checked ? "Worker Management now returns 503 for every request." : "Worker Management is back online.");
     });
     ui.$("#reset-btn").addEventListener("click", function () {
-      if (!window.confirm(Auth.backend === "supabase" ? "Reset the settings saved in this browser? Supabase data is not affected." : "Reset all KAYA demo data? Everyone will be signed out.")) { return; }
+      if (!window.confirm(server ? "Reset the settings saved in this browser? Data in " + server + " is not affected." : "Reset all KAYA demo data? Everyone will be signed out.")) { return; }
       KAYA.WorkerManagementAPI.reset();
       KAYA.WorkerManagementAPI.setDown(false);
       KAYA.CustomerStore.reset();
       KAYA.Catalog.reset();
       Auth.reset();
-      if (Auth.backend === "supabase") { window.location.reload(); return; }
+      if (server) { window.location.reload(); return; }
       window.location.replace("admin-login.html?reason=logout");
     });
     ui.$("#pw-form").addEventListener("submit", function (e) {
