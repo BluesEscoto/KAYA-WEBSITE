@@ -7,7 +7,10 @@
   var Auth = KAYA.Auth;
   var me = Auth.current();
   var workerId = me.linked_id;
-  var api = KAYA.PortalClient("worker", workerId);
+  /* Every request belongs to the view that made it (see ui.viewGuard). */
+  var guard = ui.viewGuard();
+  var portal = KAYA.PortalClient("worker", workerId);
+  var api = { request: function (method, path, body) { return guard(portal.request(method, path, body)); } };
   var root = ui.$("#view-root");
   var POLL_MS = 5000;
   var LOCKED_UNTIL_APPROVED = ["requests", "schedule", "estimates", "progress", "payments", "warranty", "passport"];
@@ -395,7 +398,7 @@
       var nw = ui.$("#pw-new").value;
       if (!ui.fieldErrors(e.target, { old: ui.$("#pw-old").value ? "" : "Enter your current password.", "new": Auth.passwordError(nw) })) { return; }
       var form = e.target;
-      Promise.resolve(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
+      guard(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
         ui.showMessage(ui.$("#pw-msg"), res.ok ? "Password updated." : res.error, res.ok ? "success" : "error");
         if (res.ok) { form.reset(); }
       });
@@ -461,6 +464,7 @@
     payments: payments, warranty: warranty, passport: passport, profile: profileView };
 
   function render() {
+    guard.next();
     view = (window.location.hash || "#dashboard").slice(1);
     if (!RENDER[view]) { view = "dashboard"; }
     document.title = TITLES[view] + " — KAYA";

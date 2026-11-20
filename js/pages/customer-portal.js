@@ -4,7 +4,13 @@
   if (!KAYA.Auth.ok) { return; }
   var ui = KAYA.ui;
   var Auth = KAYA.Auth;
-  var client = KAYA.IntegrationClient;
+  /* Every request belongs to the view that made it (see ui.viewGuard). getPayee is left out:
+     its result is cached across views and only written into the form that asked for it. */
+  var guard = ui.viewGuard();
+  var client = Object.create(KAYA.IntegrationClient);
+  ["listMyBookings", "listMyWarranty", "recordPayment", "requestWarranty", "submitReview", "updateWarranty"].forEach(function (name) {
+    client[name] = function () { return guard(KAYA.IntegrationClient[name].apply(KAYA.IntegrationClient, arguments)); };
+  });
   var store = KAYA.CustomerStore;
   var root = ui.$("#view-root");
   var VIEWS = ["dashboard", "track", "payments", "warranty", "reviews", "profile"];
@@ -363,7 +369,7 @@
     ui.$("#pf-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var form = e.target;
-      Promise.resolve(Auth.updateProfile({ full_name: ui.$("#pf-name").value, phone: ui.$("#pf-phone").value, city: ui.$("#pf-city").value })).then(function (res) {
+      guard(Auth.updateProfile({ full_name: ui.$("#pf-name").value, phone: ui.$("#pf-phone").value, city: ui.$("#pf-city").value })).then(function (res) {
         if (!res.ok) { ui.fieldErrors(form, res.errors || {}); if (res.error) { ui.showMessage(ui.$("#pf-msg"), res.error, "error"); } return; }
         ui.fieldErrors(form, {});
         Auth.renderNav();
@@ -397,7 +403,7 @@
       };
       if (!ui.fieldErrors(e.target, errors)) { return; }
       var form = e.target;
-      Promise.resolve(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
+      guard(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
         if (!res.ok) { ui.showMessage(ui.$("#pw-msg"), res.error, "error"); return; }
         form.reset();
         ui.showMessage(ui.$("#pw-msg"), "Password updated.", "success");
@@ -410,6 +416,7 @@
   var RENDER = { dashboard: dashboard, track: track, payments: payments, warranty: warranty, reviews: reviews, profile: profile };
 
   function render() {
+    guard.next();
     var view = (window.location.hash || "#dashboard").slice(1);
     if (VIEWS.indexOf(view) === -1) { view = "dashboard"; }
     document.title = { dashboard: "Dashboard", track: "Track Service", payments: "Payments", warranty: "Warranty Requests", reviews: "Reviews", profile: "Profile" }[view] + " — KAYA";

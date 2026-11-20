@@ -5,7 +5,10 @@
   if (!KAYA.Auth.ok) { return; }
   var ui = KAYA.ui;
   var Auth = KAYA.Auth;
-  var api = KAYA.PortalClient("admin", Auth.current().linked_id);
+  /* Every request belongs to the view that made it (see ui.viewGuard). */
+  var guard = ui.viewGuard();
+  var portal = KAYA.PortalClient("admin", Auth.current().linked_id);
+  var api = { request: function (method, path, body) { return guard(portal.request(method, path, body)); } };
   var root = ui.$("#view-root");
   var TITLES = {
     dashboard: "Admin Dashboard", applications: "Worker Applications", users: "Users", services: "Services", bookings: "Bookings",
@@ -147,7 +150,7 @@
   function renderUsers() {
     var role = ui.$("#u-role").value, q = ui.$("#u-q").value.trim().toLowerCase();
     var meId = Auth.current().user_id;
-    Promise.resolve(Auth.listUsers()).then(function (users) {
+    guard(Auth.listUsers()).then(function (users) {
     var list = users.filter(function (u) {
       return (!role || u.role === role) && (!q || (u.full_name + " " + u.email).toLowerCase().indexOf(q) !== -1);
     });
@@ -333,7 +336,7 @@
       var nw = ui.$("#pw-new").value;
       if (!ui.fieldErrors(e.target, { old: ui.$("#pw-old").value ? "" : "Enter your current password.", "new": Auth.passwordError(nw) })) { return; }
       var form = e.target;
-      Promise.resolve(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
+      guard(Auth.changePassword(ui.$("#pw-old").value, nw)).then(function (res) {
         ui.showMessage(ui.$("#pw-msg"), res.ok ? "Password updated." : res.error, res.ok ? "success" : "error");
         if (res.ok) { form.reset(); }
       });
@@ -375,7 +378,7 @@
     if (userBtn) {
       var status = userBtn.getAttribute("data-ustatus");
       if (status !== "ACTIVE" && !window.confirm(status === "SUSPENDED" ? "Suspend this account? They will be signed out and cannot log in." : "Deactivate this account? They will be signed out and cannot log in.")) { return; }
-      Promise.resolve(Auth.setUserStatus(userBtn.getAttribute("data-user"), status)).then(function (res) {
+      guard(Auth.setUserStatus(userBtn.getAttribute("data-user"), status)).then(function (res) {
         if (!res.ok) { ui.toast(res.error); return; }
         var done = function () { ui.toast("Account " + status.toLowerCase() + "."); renderUsers(); };
         if (userBtn.getAttribute("data-role") === "worker" && userBtn.getAttribute("data-linked")) {
@@ -425,6 +428,7 @@
     incidents: incidents, warranty: warranty, reports: reports, settings: settings };
 
   function render() {
+    guard.next();
     var view = (window.location.hash || "#dashboard").slice(1);
     if (!RENDER[view]) { view = "dashboard"; }
     document.title = TITLES[view] + " — KAYA Admin";

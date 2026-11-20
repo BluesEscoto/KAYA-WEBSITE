@@ -210,11 +210,27 @@ KAYA.ui = (function () {
     Array.prototype.forEach.call(els, function (el) { io.observe(el); });
   }
 
+  /* For portals with several #views: a response that arrives after the user has moved to
+     another view is dropped, so a slow request can't write into, or show an error on, the
+     new view. Wrap each request with guard(promise); call guard.next() on every view change. */
+  function viewGuard() {
+    var current = 0;
+    function guard(promise) {
+      var mine = current;
+      return new Promise(function (resolve, reject) {
+        Promise.resolve(promise).then(function (value) { if (mine === current) { resolve(value); } },
+          function (err) { if (mine === current) { reject(err); } });
+      });
+    }
+    guard.next = function () { current += 1; };
+    return guard;
+  }
+
   return {
     esc: esc, $: $, param: param, serviceName: serviceName, skillLabel: skillLabel,
     formatDate: formatDate, toManilaIso: toManilaIso, statusBadge: statusBadge, stars: stars,
     errorText: errorText, showMessage: showMessage, fillServiceSelect: fillServiceSelect,
     fillCitySelect: fillCitySelect, peso: peso, toast: toast, fieldErrors: fieldErrors,
-    initPasswordFields: initPasswordFields, reveal: reveal
+    initPasswordFields: initPasswordFields, reveal: reveal, viewGuard: viewGuard
   };
 })();
