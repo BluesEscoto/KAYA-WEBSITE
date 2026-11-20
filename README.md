@@ -12,6 +12,15 @@ Static pages (`html/`, `css/`, `js/`, `images/`), no build step.
 - **Supabase** — used by the live site while `API_URL` is empty (`js/shared/supabase-config.js`).
 - **Browser-only demo** — used when neither is available (for example, opening a page from `file://`).
 
+## Search engines
+
+- `robots.txt` allows crawling and points to `sitemap.xml`, which lists the public pages.
+- Public pages carry a description, a canonical address and sharing (Open Graph) tags; pages that only work after logging in are marked `noindex`.
+- The 32-character `.txt` file at the root is the [IndexNow](https://www.indexnow.org/) key, used to tell Bing and other IndexNow search engines about new or changed pages.
+- For Google, add the site in [Google Search Console](https://search.google.com/search-console) (URL-prefix property `https://kayaaaaa.vercel.app/`, verified with the HTML-file method) and submit `https://kayaaaaa.vercel.app/sitemap.xml`.
+
+If the site moves to another domain, update the addresses in `robots.txt`, `sitemap.xml` and the canonical/Open Graph tags.
+
 ## Run locally with the backend
 
 1. Start the backend (MySQL, `npm run db:migrate`, `npm run db:seed`, `npm run dev`); it listens on port 4000.
